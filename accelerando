@@ -1,0 +1,455 @@
+#!/usr/bin/perl
+#----------------------------------------------------------------
+# Copyright (c) 2005 Benjamin Crowell, all rights reserved.
+#
+# This software is available under version 2 of the GPL license.
+#
+#----------------------------------------------------------------
+
+#----------------------------------------------------------------
+# Version number
+#----------------------------------------------------------------
+our $version = "0.7"; 
+
+#----------------------------------------------------------------
+# Long documentation
+#
+# The man page is generated from this, using pod2man.
+#----------------------------------------------------------------
+
+=head1 NAME
+
+Accelerando - an accelerating musical metronome
+
+=head1 SYNOPSIS
+
+=over 8
+
+=item accelerando &
+
+Runs the GUI.
+
+=item accelerando -t
+
+Prints usage information for the command-line interface.
+
+=item accelerando -t argument-list
+
+Runs the command-line interface. The argument list can be truncated, in which case
+the missing parameters take their default values. A default value can also be specified
+with a dot.
+
+=item accelerando -v
+
+Prints the version number and exits.
+
+=back
+
+=head1 ARGUMENTS
+
+=over 8
+
+=item initial tempo
+
+Initial tempo, in beats per minute.
+
+=item wait
+
+Seconds to delay before starting.
+
+=item timesig
+
+Beats per bar
+
+=item bars
+
+Number of bars before increasing the tempo
+
+=item add
+
+Amount to add to the tempo after the first time. If a maximum tempo has been set, the
+tempo will not keep increasing at this rate forever, but rather will asymptotically
+approach the maximum tempo.
+
+=item max
+
+Maximum tempo.
+
+=item voice
+
+If this parameter is set to 1, a synthesized voice will announce each tempo.
+
+=item interpolate
+
+If set to 1, the tempo will go up smoothly rather than discontinuously at the end of each repetition. Default: 1.
+
+=back
+
+=head1 DESCRIPTION
+
+Accelerando is a musical metronome that can speed up, allowing you to practice your music at progressively faster tempos. For example, you could set it to play 60 beats per minute for 4 bars, then automatically speed up by 10 beats per minute, and so on.
+
+=head1 OTHER INFORMATION
+
+Accelerando's web page is at
+
+        http://www.lightandmatter.com/accelerando/   ,
+
+where you can always find the latest version of the software.
+
+=head1 AUTHOR
+
+Accelerando was written by Ben Crowell, http://www.lightandmatter.com/personal/.
+
+=head1 COPYRIGHT AND LICENSE
+
+B<Copyright (C)> 2008 by Benjamin Crowell.
+
+B<Accelerando> is free software; you can redistribute it and/or modify it
+under the terms of the GPL, version 2.
+
+=cut
+
+#==========================================================================
+
+use strict;
+use POSIX;
+use Time::HiRes;
+
+$| = 1; # autoflush stdout
+
+my ($gui,$args,$print_version) = parse_command_line(@ARGV);
+
+if ($print_version) {print $version,"\n"; exit}
+
+our $semaphore_file = '';
+our $return_info_file = '';
+our $cleanup_file = '.accelerando_clean_up'; # needed in case the UI process dies while leaving the helper running
+
+sub catch_signals {
+  $SIG{TERM} = sub{panic('term')};
+  $SIG{INT}  = sub{panic('int')};
+  $SIG{QUIT} = sub{panic('quit')};
+  $SIG{TSTP} = sub{panic('tstp')};
+  $SIG{HUP}  = sub{panic('hup')};
+  $SIG{ABRT} = sub{panic('abrt')};
+  $SIG{SEGV} = sub{panic('segv')};
+      # ... segmentation violation could indicate data are corrupted, in which
+      # case you wouldn't want to save to disk; however, the data is all
+      # pure Perl, and when segvs occur, they're presumably occurring in
+      # Perl/Tk, which means saving the data is the right thing to do.
+}
+
+sub panic {
+  my $signal = shift;
+  #print "Caught signal $signal.\n";
+  shut_the_hell_up();
+  exit();
+}
+
+END {
+  shut_the_hell_up();
+}
+
+sub shut_the_hell_up {
+  unlink $semaphore_file if $semaphore_file;
+  $semaphore_file = '';
+  if (-e $cleanup_file) {
+    open(FILE,"<$cleanup_file");
+    $semaphore_file = <FILE>;
+    close FILE;
+    chomp $semaphore_file;
+    unlink $semaphore_file;
+    $semaphore_file = '';
+    unlink $cleanup_file;
+  }
+}
+
+my @inputs = (
+  {'what'=>'initial','default'=>60,'name'=>'Initial tempo'},
+  {'what'=>'wait','default'=>10,'name'=>'Seconds to delay before starting'},
+  {'what'=>'timesig','default'=>4,'name'=>'Beats per bar'},
+  {'what'=>'bars','default'=>4,'name'=>'Number of bars before increasing the tempo'},
+  {'what'=>'add','default'=>0,'name'=>'Amount to add to the tempo after the first time'},
+  {'what'=>'max','default'=>($gui ? '' : '999'),'name'=>'Maximum tempo'},
+  {'what'=>'voice','default'=>$gui,'name'=>'Announce tempos','type'=>'Checkbutton'},
+  {'what'=>'interpolate','default'=>1,'name'=>'Increase tempo smoothly during each repetition','type'=>'Checkbutton'},
+);
+my @descriptions = ();
+foreach my $i(@inputs) {push @descriptions,$i->{'what'}}
+my %input_var = ();
+
+catch_signals();
+shut_the_hell_up(); # in case a previous UI process died while leavign the helper orphaned
+
+if ($gui) {
+  unless (eval("require Tk")) {die "Perl::Tk does not seem to be installed. To use the terminal-based interface, do accelerando -t."}
+  eval("use Tk;  use Tk ':variables';");
+  gui();
+}
+else {
+  my @args = @$args;
+  if (@args <1) {die usage()}
+  my $k = 0;
+  foreach my $i(@inputs) {
+    my $what = $i->{'what'};
+    if (exists $args[$k] && $args[$k] ne '.') {
+      $input_var{$what} = $args[$k];
+    }
+    else {
+      $input_var{$what} = $i->{default};
+    }
+    ++$k;
+  }
+  print '                            ',join(' ',@descriptions),"\n";
+  ($return_info_file,$semaphore_file) = set_up_for_helper(\@inputs,\%input_var);
+  if ($input_var{wait}>0) {
+    print "Delaying $input_var{wait} seconds before starting.                                            ";
+    for (my $i=$input_var{wait}; $i>0; $i--) {
+      print "$i ";
+      sleep(1);
+    }
+    print "\n";
+  }
+  my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
+  system($cmd)==0 or die "shell command $cmd failed, $?";
+  print "Press enter to stop.\n";
+  <STDIN>;
+  shut_the_hell_up();
+}
+
+sub parse_command_line {
+  my @ARGV = @_;
+  my $gui = 1;
+  my $print_version = 0;
+  my @args;
+  foreach my $arg(@ARGV) {
+    if ($arg =~ m/\-([a-z])/) {
+      my $option = $1;
+      if ($option eq "t") {$gui=0}
+      if ($option eq "v") {$print_version=1}
+    }
+    else {
+      push @args,$arg;
+    }
+  }
+  return ($gui,\@args,$print_version);
+}
+
+sub usage {
+  my $r = <<STUFF;
+Full documentation is available on the program's web page, http://www.lightandmatter.com/accelerando/, and via its man page.
+Inputs:
+STUFF
+  $r = $r . describe_args();
+  $r = $r . "usage:\n             accelerando -t ".join(' ',@descriptions)."\n";
+  return $r;
+}
+
+sub describe_args {
+  my $r = '';
+  foreach my $i(@inputs) {
+    $r = $r . "  ".(sprintf "%10s",$i->{what})." = ".$i->{name}." (default=".$i->{default}.")\n";
+  }
+  return $r;
+}
+
+#---------------------------------------------------------------------------------------------
+#  GUI
+#---------------------------------------------------------------------------------------------
+
+our $mw; # main window
+
+sub gui {
+
+
+my $playing = 0;
+my $playing_message;
+
+$mw = MainWindow->new;
+
+my $menu_bar = undef;
+$menu_bar = $mw->Frame(-relief=>'raised',-borderwidth=>'2');
+my @items = ();
+push @items,['command'=>'Quit',-command=>sub{exit}];
+my $file_menu = $menu_bar->Menubutton(-text=>'File',-menuitems=>\@items,-tearoff=>0)->pack(-side=>'left');
+$menu_bar->pack(-side=>'top',-anchor=>'w',-fill=>'x');
+
+my $control_frame = $mw->Frame();
+my %input_widget = ();
+my %input_frame = ();
+foreach my $i(@inputs) {
+  my $what = $i->{'what'};
+  my $default = $i->{'default'};
+  my $name = $i->{'name'};
+  my $type = 'Entry';
+  if (exists $i->{'type'}) {$type = $i->{'type'}}
+  my $f = $control_frame->Frame()->pack(-side=>'top',-anchor=>'w');
+  my $w = $f->Label(-anchor=>'w',-justify=>'left',-text=>$name,-width=>40)->pack(-side=>'left');
+  $input_frame{$what} = $control_frame->Frame();
+  $input_var{$what} = $default;
+  my @args = (-takefocus=>1,-width=>10);
+  if ($type eq 'Entry') {
+    $input_widget{$what} = $f->Entry(@args,-textvariable=>\($input_var{$what}))->pack(-side=>'left');
+  }
+  if ($type eq 'Checkbutton') {
+    $input_widget{$what} = $f->Checkbutton(@args,-text=>'',-variable=>\($input_var{$what}))->pack(-side=>'left');
+  }
+}
+my $f = $control_frame->Frame()->pack(-side=>'top',-anchor=>'w');
+my $start = $f->Button(-text=>'Start',-command=>sub{
+  if (!$playing) {
+    ($return_info_file,$semaphore_file) = set_up_for_helper(\@inputs,\%input_var);
+    # Tell them we're delaying, and then do it:
+    my $wait = $input_var{'wait'};
+    $playing_message = empty_toplevel_window('Playing');
+    my $when_to_start = clock()+$wait;
+    my $delay_left_text = '';
+    my $update_delay_left_text = sub {
+      my $t = int($when_to_start-clock()+.99);
+      my $new;
+      if ($t>=1) {
+        $new = "Starting in $t seconds...";
+      }
+      else {
+        $new = '';
+      }
+      $delay_left_text = $new if $new ne $delay_left_text;
+    };
+    &$update_delay_left_text;
+    # Putting in -weight=>'bold' seems to cause it to ignore the font directive completely in Perl/Tk version 804.028, perl version 5.10.0.
+    #              https://rt.cpan.org/Ticket/Display.html?id=42043
+    #my $big_font = [-size=>'32',-weight=>'bold'];
+    #my $huge_font = [-size=>'300',-weight=>'bold'];
+    my $big_font = [-size=>'32'];
+    my $huge_font = [-size=>'300'];
+    my $playing_message_label = $playing_message->Label(-textvariable=>\$delay_left_text,-justify=>'left',-font=>$big_font)->pack(-side=>'top',-anchor=>'w');
+    my $display_current_tempo = $input_var{'initial'};
+    my $current_tempo = $playing_message->Label(-textvariable=>\$display_current_tempo,-justify=>'left',-font=>$huge_font)->pack(-side=>'top',-anchor=>'w');
+    $current_tempo->repeat(500,sub {
+      open(F,"<$return_info_file") or return;
+      my $tempo = <F>;
+      close F;
+      chomp $tempo;
+      $display_current_tempo=int($tempo+.5) if int($tempo)!=int($display_current_tempo) and $tempo;
+    });
+    my $when_done_playing = sub {
+      if ($playing) {
+        unlink $semaphore_file if $semaphore_file;
+        $semaphore_file = '';
+        $playing = 0;
+      }
+      $playing_message->destroy if $playing_message;
+    };
+    my $stop = $playing_message->Button(-text=>'Stop',-command=>$when_done_playing)->pack(-side=>'top',-anchor=>'w');
+    my $skip_delay = $playing_message->Button(-text=>'Skip delay',-command=>sub{$when_to_start=clock()})->pack(-side=>'top',-anchor=>'w');
+    $playing_message->bind('<Destroy>'=>$when_done_playing);
+    my ($xoffset,$yoffset) = (0,0);
+    $playing_message->geometry(offset_location($xoffset,$yoffset));
+    $playing_message->repeat(10000,sub{prevent_x_screensaver()});
+    $playing_message->repeat(100,sub{
+      if (!$playing) {
+        &$update_delay_left_text;
+        if (clock()>=$when_to_start) {
+          $playing = 1;
+          my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
+          #print "cmd=$cmd=\n";
+          system($cmd)==0 or error_message("shell command $cmd failed, $?");
+          $skip_delay->configure(-state=>'disabled');
+        }
+      }
+    });
+  }
+})->pack(-side=>'left');
+$control_frame->pack(-side=>'top',-anchor=>'w');
+
+Tk::MainLoop();
+}
+
+sub empty_toplevel_window {
+  my $title = shift;
+  my $it = $mw->Toplevel();
+  $it->transient($mw);
+  $it->title($title);
+  return $it;
+}
+
+sub offset_location {
+  my $xoffset = shift; my $yoffset = shift;
+  my ($x,$y) = preferred_location_coords();
+  return coords_to_geometry_string($x+$xoffset,$y+$yoffset);
+}
+
+sub coords_to_geometry_string {
+  my $x = shift; my $y = shift;
+  if (! ($y =~ m/^[\+\-]/)) {$y='+'.$y}
+  if (! ($x =~ m/^[\+\-]/)) {$x='+'.$x}
+  return $x.$y;
+}
+
+sub preferred_location_coords {
+  $mw->geometry() =~ m/^=?(\d+)x(\d+)([+-]\d+)([+-]\d+)$/;
+  return ($3,$4);
+}
+
+sub error_message {
+  my $message = shift;
+  my $box = empty_toplevel_window("error");
+  $box->Label(-text=>$message,-justify=>'left')->pack();
+  $box->Button(-text=>"OK",-command=>sub{$box->destroy()})->pack();
+}
+
+sub empty_toplevel_window {
+  my $title = shift;
+  my $it = $mw->Toplevel();
+  $it->transient($mw);
+  $it->title($title);
+  return $it;
+}
+
+#---------------------------------------------------------------------------------------------
+#  UI-independent helper routines
+#---------------------------------------------------------------------------------------------
+
+sub prevent_x_screensaver {
+  system("xscreensaver-command -deactivate  >&- 2>&- &");
+    #... makes xscreensaver pretend there has just been some mouse or keyboard activity
+    # The xscreensaver-command executable no longer exists on recent versions of ubuntu.
+}
+
+BEGIN {
+  my $startup_time = seconds_since_epoch();
+  sub clock {
+    my $s = seconds_since_epoch();
+    return sprintf "%d.%09d",($s-$startup_time),time_nanoseconds();
+  }
+
+  sub seconds_since_epoch {
+    # return `date +%s`; # GNU only
+    my ($s,$usec) = Time::HiRes::gettimeofday();
+    return $s;
+  }
+
+  sub time_nanoseconds { # the nanoseconds part of the time since the epoch
+    # return `date +%N`;
+    my ($s,$usec) = Time::HiRes::gettimeofday();
+    return $usec*1000;
+  }
+}
+
+sub set_up_for_helper {
+    my ($inputs,$input_vars) = (@_);
+    my @inputs = @$inputs;
+    my %input_var = %$input_vars;
+    $return_info_file = POSIX::tmpnam().'_accelerando';
+    $semaphore_file = POSIX::tmpnam().'_accelerando';
+    open(FILE,">>$semaphore_file");
+    foreach my $i(@inputs) {
+      print FILE $i->{what},'=',$input_var{$i->{'what'}},"\n";
+    }
+    close FILE;
+    open(FILE,">$cleanup_file");
+    print FILE $semaphore_file,"\n";
+    close FILE;
+    return ($return_info_file,$semaphore_file);
+}

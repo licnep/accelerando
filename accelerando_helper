@@ -1,0 +1,246 @@
+#!/usr/bin/perl
+#----------------------------------------------------------------
+# Copyright (c) 2005 Benjamin Crowell, all rights reserved.
+#
+# This software is available under version 2 of the GPL license.
+#
+#----------------------------------------------------------------
+
+use strict;
+use POSIX;
+use Time::HiRes;
+use Math::Trig;
+
+# This program is run through a shell by the UI.
+#   accelerando_helper semaphore-file return-info-file
+# When the semaphore file stops existing, that's the signal for the helper app to quit.
+# The semaphore file also includes all the args.
+
+$| = 1; # autoflush stdout
+
+our $wav_file = "/usr/share/apps/accelerando/sounds/metronome_click.wav"; # if using aplay
+our $mp3_file = "/usr/share/apps/accelerando/sounds/metronome_click.mp3"; # if using madplay
+our $click_length = .0507; # seconds, the length of the ogg file
+our $play_command;
+
+# To detect whether aplay is available, we need to attempt to run aplay in a shell and see if that's an error.
+# In some implementations of sh (e.g., the one on unslung NSLU2), this results in an error message that I can't seem to
+# handle by I/O redirection using 1> and 2>. So first try to detect if bash is available, and if so, use it.
+my $shell = (system("bash --version 1>/dev/null 2>/dev/null")==0) ? "bash" : "sh";
+if (system("$shell -c \"aplay --version 1>/dev/null 2>/dev/null\"")==0) {
+  $play_command = "aplay -q $wav_file 1>/dev/null 2>/dev/null";
+}
+else {
+  $play_command = "madplay $mp3_file 1>/dev/null 2>/dev/null";
+}
+
+# The following only really works if a child process isn't running. If it is, the child gets the signal,
+# and we just have to test the return value.
+$SIG{INT} = sub{ clean_up_and_exit()};
+$SIG{QUIT} = sub{ clean_up_and_exit()};
+
+our $semaphore_file = shift @ARGV;
+our $return_info_file = shift @ARGV;
+exit unless -r $semaphore_file;
+open(F,"<$semaphore_file") or die "error reading $semaphore_file, $!";
+my %args;
+while (my $line=<F>) {
+  if ($line=~/(.*)=(.*)/) {
+    $args{$1}=$2;
+  }
+}
+close F;
+start(\%args);
+
+#---------------------------------------------------------------------------------------------
+#  sound
+#---------------------------------------------------------------------------------------------
+sub start {
+  my $args = shift;
+  my $initial = $args->{initial};
+  my $timesig = $args->{timesig};
+  my $bars = $args->{bars};
+  my $add = $args->{add};
+  my $max = $args->{max};
+  my $wait = $args->{wait}; # This delay actually happens in the UI, not here.
+  my $voice = $args->{voice};
+  my $interpolate = $args->{interpolate};
+
+  my $player_delay = 0;
+    # estimated time to play the wave file, in seconds; this will be updated later, based on real-time
+    # data about how fast we're actually going; on a modern system, putting this at zero seems to
+    # have no observable effect on the tempo
+
+  die_if_necessary();
+  if (1) {
+    die_if_necessary();
+    #text_to_speech("ready")==0 or clean_up_and_exit();
+    text_to_speech("ready") if $voice;
+  }
+  die_if_necessary();
+
+  my $frac = 1+$add/$initial;
+  #print "The tempo will be increased by a factor of $frac each time.\n";
+  my $first_time = 1;
+
+  #--------------------------------------------------------------------------------------
+  # When the user sets a maximum tempo, we want to approach that tempo asymptotically. The
+  # following code defines a nonlinear function $knee that does that for us.
+  #--------------------------------------------------------------------------------------
+  # first a little helper function that computes x^y:
+  my $power = sub {
+    my $x = shift;
+    my $y = shift;
+    return exp($y*log($x));
+  };
+  # a function that has a slope of 1 at x=0, and approaches 1 as x->infty
+  my $knee = sub {
+    my $x = shift;
+    # used to use tanh, but that kneed over too sharply, so...
+    my $p = 2; # bigger p means sharper knee
+    return 1-&$power(($x/$p+1),-$p);
+  };
+  my $next_tempo = sub {
+    my ($initial,$tempox,$max,$frac,$old_tempo) = @_;
+    my $tempo = $tempox;
+    if ($max ne '') {
+      if ($initial<$max) { # normal case
+        $tempo = $initial+&$knee(($tempox-$initial)/($max-$initial))*($max-$initial); 
+      }
+      else { # user set initial>max; produce output, and don't divide by zero
+        $tempo=$initial;
+      }
+    }
+    if ($tempo<$old_tempo+1 && $frac>1. && ($max eq '' || $old_tempo+1<$max)) {$tempo=$old_tempo+1}
+    return $tempo;
+  };
+
+  #--------------------------------------------------------------------------------------
+  # main loop over tempos
+  #--------------------------------------------------------------------------------------
+  my $old_tempo = -1;
+  for (my $tempox=$initial; ; $tempox*=$frac) { # $tempox = tempo we use if max = ''
+    my $tempo = &$next_tempo($initial,$tempox,$max,$frac,$old_tempo);
+    $old_tempo = $tempo;
+    my $next = &$next_tempo($initial,$tempox*$frac,$max,$frac,$old_tempo);
+    last if $tempo>500;
+    open(F,">$return_info_file");
+    print F "$tempo\n";
+    close F;
+    #print int($tempo)." beats per minute\n";
+    if ($first_time || $tempo>$initial) {
+      if ($voice) {
+        my $describe_tempo = int($tempo+.5);
+        $describe_tempo=~s/(\d)(\d\d)$/$1 $2/ if $describe_tempo%100>=10; # e.g., change 120 to 1 20, so it says "one twenty;" but keep 100 or 209 as is
+        text_to_speech($describe_tempo)==0 or clean_up_and_exit();
+      }
+      else {
+        print int($tempo+.5)," "; # useful for terminal interface
+      }
+    }
+    $first_time = 0;
+    my $dt = 60/$tempo;
+    my ($t,$last_t);
+    my $f = 1;
+    if ($interpolate) {$f = &$power($frac,-1./($bars*$timesig))} # for interpolation; factor by which dt goes down with each beat
+    for (my $bar=1; $bar<=$bars; $bar++) {
+      for (my $beat=1; $beat<=$timesig; $beat++) {
+        click()==0 or clean_up_and_exit();
+        my $delay = $dt - $click_length - $player_delay; # seconds
+        time_delay($delay); # because sleep() doesn't work for short times
+        die_if_necessary();
+        $t = clock();
+        if (defined $last_t) {
+          my $real_dt = $t-$last_t; # amount of time that actually elapsed
+          #print "real_dt=$real_dt\n";
+          my $correction = $real_dt-$dt; # positive if we fell behind
+          if ($correction>.05) {$correction=.05} # don't let it go crazy if the cpu just got busy for a second
+          $correction *= .5; # avoid undamped oscillations, etc.
+          $player_delay += $correction;
+          if ($player_delay<0) {$player_delay=0}
+          #print "real_dt=$real_dt, player_delay=$player_delay, corr=$correction, player_delay=$player_delay\n";
+        }
+        $last_t = $t;
+        $dt = $dt*$f;
+      }
+    }
+    #time_delay($dt*$between); # seconds
+  }
+
+  clean_up_and_exit();
+
+}
+
+#----------------------------------------------------------------------------------
+
+sub die_if_necessary {
+  if (!-e $semaphore_file) {
+    unlink $return_info_file;
+    clean_up_and_exit();
+  }
+}
+
+sub time_delay {
+  my $t = shift; # seconds
+  #select undef,undef,undef,$t; # because sleep() doesn't work for short times
+  Time::HiRes::usleep($t*1_000_000);
+}
+
+sub ask {
+  my $prompt = shift;
+  my $default = '';
+  my $show_default = '';
+  if (@_) {$default=shift; $show_default=" ($default)"}
+  print "$prompt${show_default}?\n";
+  my $answer = <STDIN>;
+  chomp $answer;
+  if ($answer eq '') {$answer=$default}
+  return $answer;
+}
+
+sub click {
+  my $cmd = $play_command;
+  my $r= system($cmd);
+  if ($r!=0 && $r!=2) {print "Return code $r from $cmd\n"} # gives return code 2 when you hit control-C while madplay is running in terminal UI; don't print message to stdout
+  return $r;
+}
+
+
+BEGIN {
+  my $startup_time = seconds_since_epoch();
+  sub clock {
+    my $s = seconds_since_epoch();
+    return sprintf "%d.%09d",($s-$startup_time),time_nanoseconds();
+  }
+
+  sub seconds_since_epoch {
+    # return `date +%s`; # GNU only
+    my ($s,$usec) = Time::HiRes::gettimeofday();
+    return $s;
+  }
+
+  sub time_nanoseconds { # the nanoseconds part of the time since the epoch
+    # return `date +%N`;
+    my ($s,$usec) = Time::HiRes::gettimeofday();
+    return $usec*1000;
+  }
+}
+
+sub text_to_speech {
+  my $text = shift;
+  my $cmd = "echo '$text' |  festival --tts 1>/dev/null 2>/dev/null";
+  my $r= system($cmd);
+  #  if ($r!=0) {print "Return code $r from $cmd\n"}
+  return $r;
+}
+
+sub clean_up_and_exit {
+  #print "\n";
+  exit;
+}
+
+END {
+  clean_up_and_exit();
+}
+
+1;
