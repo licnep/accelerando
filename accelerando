@@ -275,7 +275,8 @@ my $start_sub = sub{
     ($return_info_file,$semaphore_file) = set_up_for_helper(\@inputs,\%input_var);
     # Tell them we're delaying, and then do it:
     my $wait = $input_var{'wait'};
-    $playing_message = empty_toplevel_window('Playing');
+    my $playing_message;
+    #$playing_message = empty_toplevel_window('Playing');
     my $when_to_start = clock()+$wait;
     my $delay_left_text = '';
     my $update_delay_left_text = sub {
@@ -290,16 +291,11 @@ my $start_sub = sub{
       $delay_left_text = $new if $new ne $delay_left_text;
     };
     &$update_delay_left_text;
-    # Putting in -weight=>'bold' seems to cause it to ignore the font directive completely in Perl/Tk version 804.028, perl version 5.10.0.
-    #              https://rt.cpan.org/Ticket/Display.html?id=42043
-    #my $big_font = [-size=>'32',-weight=>'bold'];
-    #my $huge_font = [-size=>'300',-weight=>'bold'];
-    my $big_font = [-size=>'32'];
-    my $huge_font = [-size=>'300'];
-    my $playing_message_label = $playing_message->Label(-textvariable=>\$delay_left_text,-justify=>'left',-font=>$big_font)->pack(-side=>'top',-anchor=>'w');
+    #my $playing_message_label = $playing_message->Label(-textvariable=>\$delay_left_text,-justify=>'left',-font=>$big_font)->pack(-side=>'top',-anchor=>'w');
     my $display_current_tempo = $input_var{'initial'};
-    my $current_tempo = $playing_message->Label(-textvariable=>\$display_current_tempo,-justify=>'left',-font=>$huge_font)->pack(-side=>'top',-anchor=>'w');
-    $current_tempo->repeat(500,sub {
+    my $current_tempo;
+    #my $current_tempo = $playing_message->Label(-textvariable=>\$display_current_tempo,-justify=>'left',-font=>$huge_font)->pack(-side=>'top',-anchor=>'w');
+    0 && $current_tempo->repeat(500,sub {
       open(F,"<$return_info_file") or return;
       my $tempo = <F>;
       close F;
@@ -312,15 +308,20 @@ my $start_sub = sub{
         $semaphore_file = '';
         $playing = 0;
       }
-      $playing_message->destroy if $playing_message;
+      #$playing_message->destroy if $playing_message;
     };
-    my $stop = $playing_message->Button(-text=>'Stop',-command=>$when_done_playing)->pack(-side=>'top',-anchor=>'w');
-    my $skip_delay = $playing_message->Button(-text=>'Skip delay',-command=>sub{$when_to_start=clock()})->pack(-side=>'top',-anchor=>'w');
-    $playing_message->bind('<Destroy>'=>$when_done_playing);
+    #my $stop = $playing_message->Button(-text=>'Stop',-command=>$when_done_playing)->pack(-side=>'top',-anchor=>'w');
+    my $skip_delay;
+    #my $skip_delay = $playing_message->Button(-text=>'Skip delay',-command=>sub{$when_to_start=clock()})->pack(-side=>'top',-anchor=>'w');
+    #$playing_message->bind('<Destroy>'=>$when_done_playing);
     my ($xoffset,$yoffset) = (0,0);
-    $playing_message->geometry(offset_location($xoffset,$yoffset));
-    $playing_message->repeat(10000,sub{prevent_x_screensaver()});
-    $playing_message->repeat(100,sub{
+    #$playing_message->geometry(offset_location($xoffset,$yoffset));
+    #$playing_message->repeat(10000,sub{prevent_x_screensaver()});
+
+    my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
+    system($cmd)==0 or error_message("shell command $cmd failed, $?");
+
+    0 && $playing_message->repeat(100,sub{
       if (!$playing) {
         &$update_delay_left_text;
         if (clock()>=$when_to_start) {
@@ -328,7 +329,7 @@ my $start_sub = sub{
           my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
           #print "cmd=$cmd=\n";
           system($cmd)==0 or error_message("shell command $cmd failed, $?");
-          $skip_delay->configure(-state=>'disabled');
+          #$skip_delay->configure(-state=>'disabled');
         }
       }
     });
@@ -361,12 +362,15 @@ foreach my $i(@inputs) {
   if (exists $i->{'type'}) {$type = $i->{'type'}}
   my $label =  Gtk2::Label->new($name);
   $input_var{$what} = $default;
-  my @args = (-takefocus=>1,-width=>10);
   if ($type eq 'Entry') {
     $input_widget{$what} = Gtk2::Entry->new();
+    $input_widget{$what}->set_text($default);
+    $input_widget{$what}->signal_connect (changed => sub {$input_var{$what} = $input_widget{$what}->get_text()});
   }
   if ($type eq 'Checkbutton') {
     $input_widget{$what} = Gtk2::CheckButton->new();
+    $input_widget{$what}->set_active($default);
+    $input_widget{$what}->signal_connect (toggled => sub {$input_var{$what} = $input_widget{$what}->get_active()});
   }
   $input_table->attach_defaults($label,               0,1,$k,$k+1); # widget, left, right, top, bottom
   $input_table->attach_defaults($input_widget{$what}, 1,2,$k,$k+1); # widget, left, right, top, bottom
