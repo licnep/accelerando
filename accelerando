@@ -183,8 +183,12 @@ catch_signals();
 shut_the_hell_up(); # in case a previous UI process died while leavign the helper orphaned
 
 if ($gui) {
-  unless (eval("require Tk")) {die "Perl::Tk does not seem to be installed. To use the terminal-based interface, do accelerando -t."}
-  eval("use Tk;  use Tk ':variables';");
+  unless (eval("require Gtk2")) {die "Gtk2-Perl does not seem to be installed. To use the terminal-based interface, do accelerando -t."}
+  eval(<<GTK_STUFF
+    use Glib qw/TRUE FALSE/;
+    use Gtk2 '-init'; 
+GTK_STUFF
+  );
   gui();
 }
 else {
@@ -266,38 +270,7 @@ sub gui {
 my $playing = 0;
 my $playing_message;
 
-$mw = MainWindow->new;
-
-my $menu_bar = undef;
-$menu_bar = $mw->Frame(-relief=>'raised',-borderwidth=>'2');
-my @items = ();
-push @items,['command'=>'Quit',-command=>sub{exit}];
-my $file_menu = $menu_bar->Menubutton(-text=>'File',-menuitems=>\@items,-tearoff=>0)->pack(-side=>'left');
-$menu_bar->pack(-side=>'top',-anchor=>'w',-fill=>'x');
-
-my $control_frame = $mw->Frame();
-my %input_widget = ();
-my %input_frame = ();
-foreach my $i(@inputs) {
-  my $what = $i->{'what'};
-  my $default = $i->{'default'};
-  my $name = $i->{'name'};
-  my $type = 'Entry';
-  if (exists $i->{'type'}) {$type = $i->{'type'}}
-  my $f = $control_frame->Frame()->pack(-side=>'top',-anchor=>'w');
-  my $w = $f->Label(-anchor=>'w',-justify=>'left',-text=>$name,-width=>40)->pack(-side=>'left');
-  $input_frame{$what} = $control_frame->Frame();
-  $input_var{$what} = $default;
-  my @args = (-takefocus=>1,-width=>10);
-  if ($type eq 'Entry') {
-    $input_widget{$what} = $f->Entry(@args,-textvariable=>\($input_var{$what}))->pack(-side=>'left');
-  }
-  if ($type eq 'Checkbutton') {
-    $input_widget{$what} = $f->Checkbutton(@args,-text=>'',-variable=>\($input_var{$what}))->pack(-side=>'left');
-  }
-}
-my $f = $control_frame->Frame()->pack(-side=>'top',-anchor=>'w');
-my $start = $f->Button(-text=>'Start',-command=>sub{
+my $start_sub = sub{
   if (!$playing) {
     ($return_info_file,$semaphore_file) = set_up_for_helper(\@inputs,\%input_var);
     # Tell them we're delaying, and then do it:
@@ -360,10 +333,58 @@ my $start = $f->Button(-text=>'Start',-command=>sub{
       }
     });
   }
-})->pack(-side=>'left');
-$control_frame->pack(-side=>'top',-anchor=>'w');
+};
 
-Tk::MainLoop();
+my $window = Gtk2::Window->new('toplevel');
+$window->signal_connect('delete_event' => sub { Gtk2->main_quit; });
+$window->set_border_width(5);
+$window->set_position('center_always');
+
+#my $menu_bar = undef;
+#$menu_bar = $mw->Frame(-relief=>'raised',-borderwidth=>'2');
+#my @items = ();
+#push @items,['command'=>'Quit',-command=>sub{exit}];
+#my $file_menu = $menu_bar->Menubutton(-text=>'File',-menuitems=>\@items,-tearoff=>0)->pack(-side=>'left');
+#$menu_bar->pack(-side=>'top',-anchor=>'w',-fill=>'x');
+
+my $n_inputs = @inputs;
+my $control_frame = Gtk2::VBox->new(0,5); # homogeneous, spacing; surrounds both the inputs and the start button
+my $input_table =  Gtk2::Table ->new($n_inputs,2,1); # rows, columns, homogeneous
+
+my %input_widget = ();
+my $k=0;
+foreach my $i(@inputs) {
+  my $what = $i->{'what'};
+  my $default = $i->{'default'};
+  my $name = $i->{'name'};
+  my $type = 'Entry';
+  if (exists $i->{'type'}) {$type = $i->{'type'}}
+  my $label =  Gtk2::Label->new($name);
+  $input_var{$what} = $default;
+  my @args = (-takefocus=>1,-width=>10);
+  if ($type eq 'Entry') {
+    $input_widget{$what} = Gtk2::Entry->new();
+  }
+  if ($type eq 'Checkbutton') {
+    $input_widget{$what} = Gtk2::CheckButton->new();
+  }
+  $input_table->attach_defaults($label,               0,1,$k,$k+1); # widget, left, right, top, bottom
+  $input_table->attach_defaults($input_widget{$what}, 1,2,$k,$k+1); # widget, left, right, top, bottom
+  ++$k;
+}
+
+my $start_button = Gtk2::Button->new ("Start");
+$start_button->signal_connect (clicked => $start_sub);
+
+$control_frame->pack_start($input_table,1,1,5); # box, child, expand, fill, padding
+$control_frame->pack_start($start_button,0,0,5);
+
+$window->add($control_frame);
+
+$window->show_all;
+
+Gtk2->main();
+
 }
 
 sub empty_toplevel_window {

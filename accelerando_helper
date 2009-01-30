@@ -5,6 +5,10 @@
 # This software is available under version 2 of the GPL license.
 #
 #----------------------------------------------------------------
+#
+# Plays sounds. Has no user interface.
+#
+#----------------------------------------------------------------
 
 use strict;
 use POSIX;
