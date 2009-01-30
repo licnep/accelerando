@@ -275,10 +275,13 @@ my $start_sub = sub{
     ($return_info_file,$semaphore_file) = set_up_for_helper(\@inputs,\%input_var);
     # Tell them we're delaying, and then do it:
     my $wait = $input_var{'wait'};
-    my $playing_message;
-    #$playing_message = empty_toplevel_window('Playing');
+    my $playing_message = Gtk2::Window->new('toplevel');
     my $when_to_start = clock()+$wait;
     my $delay_left_text = '';
+
+    my $playing_table =  Gtk2::Table ->new(4,1,0); # rows, columns, homogeneous
+
+    my $delay_left_label =  Gtk2::Label->new();
     my $update_delay_left_text = sub {
       my $t = int($when_to_start-clock()+.99);
       my $new;
@@ -289,51 +292,92 @@ my $start_sub = sub{
         $new = '';
       }
       $delay_left_text = $new if $new ne $delay_left_text;
+      $delay_left_label->set_markup(qq(<span font="48">$delay_left_text</span>));
     };
     &$update_delay_left_text;
-    #my $playing_message_label = $playing_message->Label(-textvariable=>\$delay_left_text,-justify=>'left',-font=>$big_font)->pack(-side=>'top',-anchor=>'w');
+
     my $display_current_tempo = $input_var{'initial'};
-    my $current_tempo;
-    #my $current_tempo = $playing_message->Label(-textvariable=>\$display_current_tempo,-justify=>'left',-font=>$huge_font)->pack(-side=>'top',-anchor=>'w');
-    0 && $current_tempo->repeat(500,sub {
-      open(F,"<$return_info_file") or return;
-      my $tempo = <F>;
-      close F;
-      chomp $tempo;
-      $display_current_tempo=int($tempo+.5) if int($tempo)!=int($display_current_tempo) and $tempo;
-    });
+    my $current_tempo = Gtk2::Label->new();
+    my $update_current_tempo_text = sub {
+      $current_tempo->set_markup(qq(<span font="300">$display_current_tempo</span>));
+    };
+    &$update_current_tempo_text;
+    my ($delay_left_source_id,$prevent_x_screensaver_source_id,$display_current_tempo_source_id);
+    my $kill_timers = sub {
+      foreach my $id($delay_left_source_id,$prevent_x_screensaver_source_id,$display_current_tempo_source_id) {
+        Glib::Source->remove($id);
+      }
+    };
     my $when_done_playing = sub {
       if ($playing) {
         unlink $semaphore_file if $semaphore_file;
         $semaphore_file = '';
         $playing = 0;
       }
-      #$playing_message->destroy if $playing_message;
+      $playing_message->destroy if $playing_message;
+      &$kill_timers;
     };
-    #my $stop = $playing_message->Button(-text=>'Stop',-command=>$when_done_playing)->pack(-side=>'top',-anchor=>'w');
     my $skip_delay;
-    #my $skip_delay = $playing_message->Button(-text=>'Skip delay',-command=>sub{$when_to_start=clock()})->pack(-side=>'top',-anchor=>'w');
-    #$playing_message->bind('<Destroy>'=>$when_done_playing);
+    $playing_message->signal_connect(destroy=>sub{&$when_done_playing});
     my ($xoffset,$yoffset) = (0,0);
     #$playing_message->geometry(offset_location($xoffset,$yoffset));
-    #$playing_message->repeat(10000,sub{prevent_x_screensaver()});
 
-    my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
-    system($cmd)==0 or error_message("shell command $cmd failed, $?");
+    my $stop_button = Gtk2::Button->new ("Stop");
+    $stop_button->signal_connect (clicked => $when_done_playing);
 
-    0 && $playing_message->repeat(100,sub{
-      if (!$playing) {
-        &$update_delay_left_text;
-        if (clock()>=$when_to_start) {
-          $playing = 1;
-          my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
-          #print "cmd=$cmd=\n";
-          system($cmd)==0 or error_message("shell command $cmd failed, $?");
-          #$skip_delay->configure(-state=>'disabled');
+    my $skip_delay_button = Gtk2::Button->new ("Skip Delay");
+    $skip_delay_button->signal_connect (clicked => sub{$when_to_start=clock()});
+
+    my $row = 0;
+    $playing_table->attach_defaults($delay_left_label,  0,1,$row,$row+1); ++$row;
+    $playing_table->attach_defaults($current_tempo,     0,1,$row,$row+1); ++$row;
+    $playing_table->attach_defaults($stop_button,       0,1,$row,$row+1); ++$row;
+    $playing_table->attach_defaults($skip_delay_button, 0,1,$row,$row+1); ++$row;
+    $playing_message->add($playing_table);
+    $playing_message->show_all();
+
+    $delay_left_source_id = Glib::Timeout::add( # deprecated, but binding for add_full() doesn't seem to exist in gtk-perl
+      # priority, milliseconds, callback:
+      0,
+      100,
+      sub{
+        if (!$playing) {
+          &$update_delay_left_text;
+          if (clock()>=$when_to_start) {
+            $playing = 1;
+            my $cmd = "accelerando_helper $semaphore_file $return_info_file &";
+            #print "cmd=$cmd=\n";
+            system($cmd)==0 or error_message("shell command $cmd failed, $?");
+            #$skip_delay->configure(-state=>'disabled');
+          }
+          return 1;
         }
+        return 0; # stop getting events
       }
-    });
-  }
+    );
+
+  $prevent_x_screensaver_source_id = Glib::Timeout::add( # deprecated, but binding for add_full() doesn't seem to exist in gtk-perl
+    0,
+    10000,
+    sub{prevent_x_screensaver(); return 1}
+  );
+
+  $display_current_tempo_source_id = Glib::Timeout::add( # deprecated, but binding for add_full() doesn't seem to exist in gtk-perl
+    0,
+    500,
+    sub {
+      open(F,"<$return_info_file") or return 1;
+      my $tempo = <F>;
+      close F;
+      chomp $tempo;
+      $display_current_tempo=int($tempo+.5) if int($tempo)!=int($display_current_tempo) and $tempo;
+      &$update_current_tempo_text;
+      return 1;
+    }
+  );
+
+  } # end if not playing
+
 };
 
 my $window = Gtk2::Window->new('toplevel');
@@ -373,7 +417,8 @@ foreach my $i(@inputs) {
     $input_widget{$what}->signal_connect (toggled => sub {$input_var{$what} = $input_widget{$what}->get_active()});
   }
   $input_table->attach_defaults($label,               0,1,$k,$k+1); # widget, left, right, top, bottom
-  $input_table->attach_defaults($input_widget{$what}, 1,2,$k,$k+1); # widget, left, right, top, bottom
+  $input_table->attach($input_widget{$what}, 1,2,$k,$k+1,[],[],0,1); # widget, left, right, top, bottom, xoptions, yoptions, xpadding, ypadding
+  $label->set_alignment(1,0); # right, top
   ++$k;
 }
 

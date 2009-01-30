@@ -70,6 +70,8 @@ sub start {
   my $voice = $args->{voice};
   my $interpolate = $args->{interpolate};
 
+  die "arguments not set in accelerando_helper, start()" unless exists $args->{initial};
+
   my $player_delay = 0;
     # estimated time to play the wave file, in seconds; this will be updated later, based on real-time
     # data about how fast we're actually going; on a modern system, putting this at zero seems to
