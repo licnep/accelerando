@@ -4,12 +4,12 @@
 #    change version number in two places in /home/bcrowell/Documents/web/source/accelerando/index.source
 #    make accelerando.1
 #    make install
-#    make post
+#    make dist && make post
 #    touch /home/bcrowell/Documents/web/source/accelerando/index.source
 #    cd /home/bcrowell/Documents/web/source && make && cd -
 # Update it on freshmeat.
 
-VERSION = 0.7
+VERSION = 1.0
 TARBALL = accelerando.tar.gz
 DIST_DIR = accelerando-$(VERSION)
 
@@ -40,18 +40,7 @@ install:
 	rm -f accelerando.1.gz
 
 dist: accelerando.1
-	rm -f $(TARBALL)
-	rm -Rf $(DIST_DIR)
-	mkdir $(DIST_DIR)
-	cp accelerando $(DIST_DIR)
-	cp accelerando_helper $(DIST_DIR)
-	cp metronome_click.wav $(DIST_DIR)
-	cp metronome_click.mp3 $(DIST_DIR)
-	cp Makefile $(DIST_DIR)
-	cp make_plain_text_manpage.pl $(DIST_DIR)
-	tar -zcvf $(TARBALL) $(DIST_DIR)
-	rm $(DIST_DIR)/*
-	rmdir $(DIST_DIR)
+	git archive --format=tar --prefix=$(DIST_DIR)/ HEAD | gzip >$(TARBALL)
 
 accelerando.1: accelerando
 	pod2man --section=1 --center="accelerando $(VERSION)" --release="$(VERSION)" \
