@@ -1,0 +1,7 @@
+package Accelerando::Words::en;
+use base qw(Accelerando::Words);
+our %Lexicon = (
+  '_AUTO' => 1,
+);
+
+1;

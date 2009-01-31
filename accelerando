@@ -115,6 +115,14 @@ under the terms of the GPL, version 2.
 use strict;
 use POSIX;
 use Time::HiRes;
+use Accelerando::Words;
+use utf8;
+use vars qw($language_handle);
+$language_handle = Accelerando::Words->get_handle() || die "Unable to find an appropriate language for your locale, as given, e.g., in your \$LANG environment variable.";
+      #... should automatically sense user's locale based on, e.g., $LANG
+
+sub w (@) { $language_handle->maketext(@_) }
+$Carp::Verbose = 1; # in case maketext fails
 
 $| = 1; # autoflush stdout
 
@@ -166,14 +174,14 @@ sub shut_the_hell_up {
 }
 
 my @inputs = (
-  {'what'=>'initial','default'=>60,'name'=>'Initial tempo'},
-  {'what'=>'wait','default'=>10,'name'=>'Seconds to delay before starting'},
-  {'what'=>'timesig','default'=>4,'name'=>'Beats per bar'},
-  {'what'=>'bars','default'=>4,'name'=>'Number of bars before increasing the tempo'},
-  {'what'=>'add','default'=>0,'name'=>'Amount to add to the tempo after the first time'},
-  {'what'=>'max','default'=>($gui ? '' : '999'),'name'=>'Maximum tempo'},
-  {'what'=>'voice','default'=>$gui,'name'=>'Announce tempos','type'=>'Checkbutton'},
-  {'what'=>'interpolate','default'=>1,'name'=>'Increase tempo smoothly during each repetition','type'=>'Checkbutton'},
+  {'what'=>'initial','default'=>60,'name'=>w('Initial tempo')},
+  {'what'=>'wait','default'=>10,'name'=>w('Seconds to delay before starting')},
+  {'what'=>'timesig','default'=>4,'name'=>w('Beats per bar')},
+  {'what'=>'bars','default'=>4,'name'=>w('Number of bars before increasing the tempo')},
+  {'what'=>'add','default'=>0,'name'=>w('Amount to add to the tempo after the first time')},
+  {'what'=>'max','default'=>($gui ? '' : '999'),'name'=>w('Maximum tempo')},
+  {'what'=>'voice','default'=>$gui,'name'=>w('Announce tempos'),'type'=>'Checkbutton'},
+  {'what'=>'interpolate','default'=>1,'name'=>w('Increase tempo smoothly during each repetition'),'type'=>'Checkbutton'},
 );
 my @descriptions = ();
 foreach my $i(@inputs) {push @descriptions,$i->{'what'}}
@@ -286,7 +294,7 @@ my $start_sub = sub{
       my $t = int($when_to_start-clock()+.99);
       my $new;
       if ($t>=1) {
-        $new = "Starting in $t seconds...";
+        $new = w('Starting in [_1] seconds...',$t);
       }
       else {
         $new = '';
@@ -322,10 +330,10 @@ my $start_sub = sub{
     my ($xoffset,$yoffset) = (0,0);
     #$playing_message->geometry(offset_location($xoffset,$yoffset));
 
-    my $stop_button = Gtk2::Button->new ("Stop");
+    my $stop_button = Gtk2::Button->new (w('Stop'));
     $stop_button->signal_connect (clicked => $when_done_playing);
 
-    my $skip_delay_button = Gtk2::Button->new ("Skip Delay");
+    my $skip_delay_button = Gtk2::Button->new (w('Skip Delay'));
     $skip_delay_button->signal_connect (clicked => sub{$when_to_start=clock()});
 
     my $row = 0;
@@ -422,7 +430,7 @@ foreach my $i(@inputs) {
   ++$k;
 }
 
-my $start_button = Gtk2::Button->new ("Start");
+my $start_button = Gtk2::Button->new (w('Start'));
 $start_button->signal_connect (clicked => $start_sub);
 
 $control_frame->pack_start($input_table,1,1,5); # box, child, expand, fill, padding
