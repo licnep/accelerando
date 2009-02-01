@@ -30,7 +30,10 @@ install:
 	$(INSTALL) metronome_click.wav /usr/share/apps/accelerando/sounds
 	$(INSTALL) metronome_click.mp3 /usr/share/apps/accelerando/sounds
 	$(INSTALL) accelerando $(BIN)
+	$(INSTALL_DIR) $(BIN)/Accelerando/Words
 	$(INSTALL) accelerando_helper $(BIN)
+	$(INSTALL) Accelerando/Words.pm $(BIN)/Accelerando
+	$(INSTALL) Accelerando/Words/*.pm $(BIN)/Accelerando/Words
 	chmod +rx $(BIN)/accelerando
 	chmod +rx $(BIN)/accelerando_helper
 	gzip -9 <accelerando.1 >accelerando.1.gz

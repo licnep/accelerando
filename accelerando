@@ -113,6 +113,9 @@ under the terms of the GPL, version 2.
 #==========================================================================
 
 use strict;
+use FindBin;
+use lib $FindBin::RealBin;
+   # RealBin follows symbolic links, as opposed to Bin, which doesn't.
 use POSIX;
 use Time::HiRes;
 use Accelerando::Words;
