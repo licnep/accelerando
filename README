@@ -7,3 +7,7 @@ INSTALLATION:
 
 $ make accelerando.1
 $ make install
+
+UNINSTALL:
+
+$ make uninstall
