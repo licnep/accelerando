@@ -138,7 +138,7 @@ sub start {
       if ($voice) {
         my $describe_tempo = int($tempo+.5);
         $describe_tempo=~s/(\d)(\d\d)$/$1 $2/ if $describe_tempo%100>=10; # e.g., change 120 to 1 20, so it says "one twenty;" but keep 100 or 209 as is
-        text_to_speech($describe_tempo)==0 or clean_up_and_exit();
+        text_to_speech($describe_tempo)==0;
       }
       else {
         print int($tempo+.5)," "; # useful for terminal interface
