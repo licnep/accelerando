@@ -52,3 +52,9 @@ accelerando.1: accelerando
 post:
 	cp $(TARBALL) $(HOME)/Lightandmatter/accelerando
 	make_plain_text_manpage.pl >$(HOME)/Documents/web/source/accelerando/manpage.txt
+
+uninstall:
+	rm -rf /usr/share/apps/accelerando
+	rm -rf $(BIN)/accelerando
+	rm -rf $(BIN)/accelerando_helper
+	rm -rf $(BIN)/Accelerando/Words
