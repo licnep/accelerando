@@ -1,0 +1,9 @@
+DEPENDANCES:
+-alsa-utils or madplay -- required
+-libgtk2-perl -- (optional) needed if you want to use the GUI
+-festival -- (optional) needed for speech synthesis features.
+
+INSTALLATION:
+
+$ make accelerando.1
+$ make install
