@@ -32,10 +32,10 @@ our $play_command;
 # handle by I/O redirection using 1> and 2>. So first try to detect if bash is available, and if so, use it.
 my $shell = (system("bash --version 1>/dev/null 2>/dev/null")==0) ? "bash" : "sh";
 if (system("$shell -c \"aplay --version 1>/dev/null 2>/dev/null\"")==0) {
-  $play_command = "aplay -q $wav_file 1>/dev/null 2>/dev/null";
+  $play_command = "aplay -q $wav_file 1>/dev/null 2>/dev/null &";
 }
 else {
-  $play_command = "madplay $mp3_file 1>/dev/null 2>/dev/null";
+  $play_command = "madplay $mp3_file 1>/dev/null 2>/dev/null &";
 }
 
 # The following only really works if a child process isn't running. If it is, the child gets the signal,
